@@ -6,7 +6,7 @@ import requests
 
 app = FastAPI()
 
-# CORS para permitir acceso desde Streamlit y Cloudflare Worker
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,7 +16,7 @@ app.add_middleware(
 )
 
 # ============================================================
-#   FUNCIÓN QUE REPLICA EXACTAMENTE A consulta_xm()
+#   FUNCIÓN ROBUSTA PARA CONSULTAR XM
 # ============================================================
 def obtener_datos(variable, tipo, fecha_inicio, fecha_fin):
 
@@ -27,14 +27,26 @@ def obtener_datos(variable, tipo, fecha_inicio, fecha_fin):
         "fechaFin": fecha_fin
     }
 
-    r = requests.get(url, params=params)
+    try:
+        r = requests.get(url, params=params, timeout=20)
+    except Exception as e:
+        return {"error": f"Error de conexión: {str(e)}"}
 
+    # Si XM responde con error HTTP
     if r.status_code != 200:
-        return {"error": f"Error consultando datos: {r.status_code}"}
+        return {"error": f"XM devolvió código {r.status_code}"}
 
-    data = r.json()
+    # Intentar leer JSON
+    try:
+        data = r.json()
+    except:
+        return {"error": "XM devolvió un formato no JSON"}
 
-    # Convertir a DataFrame conservando TODAS las columnas originales
+    # Validar que existan datos
+    if "valores" not in data or len(data["valores"]) == 0:
+        return {"error": "XM no devolvió datos para esta consulta"}
+
+    # Convertir a DataFrame
     df = pd.DataFrame(data["valores"])
 
     # Convertir tipos
@@ -44,7 +56,7 @@ def obtener_datos(variable, tipo, fecha_inicio, fecha_fin):
     if "valor" in df.columns:
         df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
 
-    # Mantener tu estructura original
+    # Agregar tipo
     df["tipo"] = tipo
 
     return df
@@ -65,7 +77,8 @@ def consulta(variable: str, tipo: str, fechaInicio: str, fechaFin: str):
 
     df = obtener_datos(variable, tipo, fechaInicio, fechaFin)
 
-    if isinstance(df, dict):  # error
+    # Si hubo error, devolverlo
+    if isinstance(df, dict):
         return df
 
     return df.to_dict(orient="records")
